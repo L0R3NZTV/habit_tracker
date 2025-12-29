@@ -1,62 +1,83 @@
 import streamlit as st
 import json
-import os
-from datetime import date, datetime, timedelta
 import pandas as pd
 import plotly.graph_objects as go
-# Rimosso plyer per compatibilità Cloud
+from datetime import date, timedelta
+import gspread
+from oauth2client.service_account import ServiceAccountCredentials
 
 # -------------------------------
 # CONFIGURAZIONE
 # -------------------------------
-FILENAME = "habit_tracker_v3.json"
-PAGE_TITLE = "Protocollo 22 | Master Routine"
-PAGE_ICON = "⚔️"
+PAGE_TITLE = "Protocollo 22 | Cloud Edition"
+PAGE_ICON = "☁️"
+SHEET_NAME = "HabitTracker_DB" # <--- METTI IL NOME ESATTO DEL TUO FOGLIO GOOGLE QUI
 
 SCHEDULE_ORDER = ["🌅 Mattina (Start)", "☀️ Pomeriggio (Grind)", "🌙 Sera (Reset)", "🔄 Tutto il Giorno"]
 
 st.set_page_config(page_title=PAGE_TITLE, layout="wide", page_icon=PAGE_ICON)
 
 # -------------------------------
-# FUNZIONI CORE
+# CONNESSIONE GOOGLE SHEETS
 # -------------------------------
+def get_db_connection():
+    """Si connette a Google Sheets usando i Secrets di Streamlit."""
+    scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
+    # Crea le credenziali dal dizionario nei secrets
+    creds = ServiceAccountCredentials.from_json_keyfile_dict(st.secrets["service_account"], scope)
+    client = gspread.authorize(creds)
+    return client
 
 def load_data():
-    if not os.path.exists(FILENAME):
-        return {
-            "user_info": {"xp": 0, "level": 1},
-            "config": [
-                {"name": "Letto Fatto", "icon": "🛏", "schedule": "🌅 Mattina (Start)", "active": True},
-                {"name": "Luce Solare (15-30m)", "icon": "☀️", "schedule": "🌅 Mattina (Start)", "active": True},
-                {"name": "Pianificazione", "icon": "📝", "schedule": "🌅 Mattina (Start)", "active": True},
-                {"name": "Deep Work (Studio/Dev)", "icon": "💻", "schedule": "🌅 Mattina (Start)", "active": True},
-                
-                {"name": "Allenamento (Massa/Skill)", "icon": "🏋️‍♂️", "schedule": "☀️ Pomeriggio (Grind)", "active": True},
-                {"name": "Corsa o Nuoto (Cardio)", "icon": "🏃‍♂️", "schedule": "☀️ Pomeriggio (Grind)", "active": True},
-                {"name": "Micro Task", "icon": "✅", "schedule": "☀️ Pomeriggio (Grind)", "active": True},
-                
-                {"name": "Idratazione (2L+)", "icon": "💧", "schedule": "🔄 Tutto il Giorno", "active": True},
-                {"name": "Pasto Calorico (Bulking)", "icon": "🍽", "schedule": "🔄 Tutto il Giorno", "active": True},
-                {"name": "Frutto/Yogurt", "icon": "🍎", "schedule": "🔄 Tutto il Giorno", "active": True},
+    """Scarica i dati dalla cella A1 del foglio Google."""
+    default_data = {
+        "user_info": {"xp": 0, "level": 1},
+        "config": [
+            {"name": "Letto Fatto", "icon": "🛏", "schedule": "🌅 Mattina (Start)", "active": True},
+            {"name": "Luce Solare (15-30m)", "icon": "☀️", "schedule": "🌅 Mattina (Start)", "active": True},
+            {"name": "Pianificazione", "icon": "📝", "schedule": "🌅 Mattina (Start)", "active": True},
+            {"name": "Deep Work (Studio/Dev)", "icon": "💻", "schedule": "🌅 Mattina (Start)", "active": True},
+            {"name": "Allenamento (Massa/Skill)", "icon": "🏋️‍♂️", "schedule": "☀️ Pomeriggio (Grind)", "active": True},
+            {"name": "Corsa o Nuoto (Cardio)", "icon": "🏃‍♂️", "schedule": "☀️ Pomeriggio (Grind)", "active": True},
+            {"name": "Micro Task", "icon": "✅", "schedule": "☀️ Pomeriggio (Grind)", "active": True},
+            {"name": "Idratazione (2L+)", "icon": "💧", "schedule": "🔄 Tutto il Giorno", "active": True},
+            {"name": "Pasto Calorico (Bulking)", "icon": "🍽", "schedule": "🔄 Tutto il Giorno", "active": True},
+            {"name": "Frutto/Yogurt", "icon": "🍎", "schedule": "🔄 Tutto il Giorno", "active": True},
+            {"name": "Cura Corpo / Skincare", "icon": "🧴", "schedule": "🌙 Sera (Reset)", "active": True},
+            {"name": "Stretching", "icon": "🤸‍♂️", "schedule": "🌙 Sera (Reset)", "active": True},
+            {"name": "Lettura Crescita (20m)", "icon": "📚", "schedule": "🌙 Sera (Reset)", "active": True},
+            {"name": "Recap Serale", "icon": "📋", "schedule": "🌙 Sera (Reset)", "active": True},
+            {"name": "Reset Ambiente", "icon": "🧹", "schedule": "🌙 Sera (Reset)", "active": True},
+            {"name": "Sonno Rispettato (7-9h)", "icon": "🛌", "schedule": "🌙 Sera (Reset)", "active": True},
+        ],
+        "history": {}
+    }
 
-                {"name": "Cura Corpo / Skincare", "icon": "🧴", "schedule": "🌙 Sera (Reset)", "active": True},
-                {"name": "Stretching", "icon": "🤸‍♂️", "schedule": "🌙 Sera (Reset)", "active": True},
-                {"name": "Lettura Crescita (20m)", "icon": "📚", "schedule": "🌙 Sera (Reset)", "active": True},
-                {"name": "Recap Serale", "icon": "📋", "schedule": "🌙 Sera (Reset)", "active": True},
-                {"name": "Reset Ambiente", "icon": "🧹", "schedule": "🌙 Sera (Reset)", "active": True},
-                {"name": "Sonno Rispettato (7-9h)", "icon": "🛌", "schedule": "🌙 Sera (Reset)", "active": True},
-            ],
-            "history": {}
-        }
     try:
-        with open(FILENAME, "r", encoding='utf-8') as f:
-            return json.load(f)
-    except:
-        return {}
+        client = get_db_connection()
+        sheet = client.open(SHEET_NAME).sheet1
+        # Legge tutto il contenuto della cella A1
+        raw_data = sheet.acell('A1').value
+        
+        if not raw_data:
+            return default_data
+        
+        return json.loads(raw_data)
+    except Exception as e:
+        # Se fallisce (es. prima volta o problemi di rete), usa default ma avvisa
+        # st.error(f"Errore connessione DB: {e}") # Decommenta per debug
+        return default_data
 
 def save_data(data):
-    with open(FILENAME, "w", encoding='utf-8') as f:
-        json.dump(data, f, indent=4, ensure_ascii=False)
+    """Salva i dati come JSON stringa nella cella A1."""
+    try:
+        client = get_db_connection()
+        sheet = client.open(SHEET_NAME).sheet1
+        # Trasforma il dizionario in stringa e salva in A1
+        json_str = json.dumps(data, ensure_ascii=False)
+        sheet.update_acell('A1', json_str)
+    except Exception as e:
+        st.error(f"Errore salvataggio: {e}")
 
 def calculate_level(xp):
     level = int(xp / 100) + 1
