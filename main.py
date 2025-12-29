@@ -9,9 +9,12 @@ from oauth2client.service_account import ServiceAccountCredentials
 # -------------------------------
 # CONFIGURAZIONE
 # -------------------------------
-PAGE_TITLE = "Protocollo 22 | Cloud Edition"
-PAGE_ICON = "☁️"
-SHEET_NAME = "HabitTracker_DB" # <--- METTI IL NOME ESATTO DEL TUO FOGLIO GOOGLE QUI
+PAGE_TITLE = "Protocollo 22 | Team Edition"
+PAGE_ICON = "👥"
+SHEET_NAME = "HabitTracker_DB" # <--- IL TUO FOGLIO GOOGLE
+
+# LISTA UTENTI (Modifica questi nomi come vuoi)
+USERS_LIST = ["Lorenzo", "Ospite", "Amico"]
 
 SCHEDULE_ORDER = ["🌅 Mattina (Start)", "☀️ Pomeriggio (Grind)", "🌙 Sera (Reset)", "🔄 Tutto il Giorno"]
 
@@ -21,16 +24,14 @@ st.set_page_config(page_title=PAGE_TITLE, layout="wide", page_icon=PAGE_ICON)
 # CONNESSIONE GOOGLE SHEETS
 # -------------------------------
 def get_db_connection():
-    """Si connette a Google Sheets usando i Secrets di Streamlit."""
     scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
-    # Crea le credenziali dal dizionario nei secrets
     creds = ServiceAccountCredentials.from_json_keyfile_dict(st.secrets["service_account"], scope)
     client = gspread.authorize(creds)
     return client
 
-def load_data():
-    """Scarica i dati dalla cella A1 del foglio Google."""
-    default_data = {
+def get_empty_profile():
+    """Genera un profilo vuoto nuovo di zecca."""
+    return {
         "user_info": {"xp": 0, "level": 1},
         "config": [
             {"name": "Letto Fatto", "icon": "🛏", "schedule": "🌅 Mattina (Start)", "active": True},
@@ -53,32 +54,36 @@ def load_data():
         "history": {}
     }
 
+def load_all_db():
+    """Scarica TUTTO il database (tutti gli utenti)."""
     try:
         client = get_db_connection()
         sheet = client.open(SHEET_NAME).sheet1
-        # Legge tutto il contenuto della cella A1
         raw_data = sheet.acell('A1').value
-        
         if not raw_data:
-            return default_data
-        
+            return {}
         return json.loads(raw_data)
-    except Exception as e:
-        # Se fallisce (es. prima volta o problemi di rete), usa default ma avvisa
-        # st.error(f"Errore connessione DB: {e}") # Decommenta per debug
-        return default_data
+    except:
+        return {}
 
-def save_data(data):
-    """Salva i dati come JSON stringa nella cella A1."""
+def save_user_data(username, user_data):
+    """Salva SOLO i dati dell'utente corrente nel database generale."""
     try:
+        # 1. Scarica tutto il DB attuale (per non sovrascrivere gli altri)
+        full_db = load_all_db()
+        
+        # 2. Aggiorna solo questo utente
+        full_db[username] = user_data
+        
+        # 3. Ricarica tutto su Google Sheets
         client = get_db_connection()
         sheet = client.open(SHEET_NAME).sheet1
-        # Trasforma il dizionario in stringa e salva in A1
-        json_str = json.dumps(data, ensure_ascii=False)
+        json_str = json.dumps(full_db, ensure_ascii=False)
         sheet.update_acell('A1', json_str)
     except Exception as e:
         st.error(f"Errore salvataggio: {e}")
 
+# ... helper functions standard ...
 def calculate_level(xp):
     level = int(xp / 100) + 1
     progress = xp % 100
@@ -96,20 +101,35 @@ def get_streak(history, habit_name):
     return streak
 
 # -------------------------------
-# UI SIDEBAR
+# SELETTORE UTENTE (SIDEBAR)
 # -------------------------------
-data = load_data()
+st.sidebar.title(f"{PAGE_ICON} Login")
+current_user = st.sidebar.selectbox("Chi sta usando l'app?", USERS_LIST)
+
+# Caricamento Dati Specifici Utente
+full_db = load_all_db()
+
+# Se l'utente non esiste nel DB, crealo vuoto
+if current_user not in full_db:
+    data = get_empty_profile()
+else:
+    data = full_db[current_user]
+
+# Logic check: user_info missing fix
 if "user_info" not in data: data["user_info"] = {"xp": 0, "level": 1}
 
+# -------------------------------
+# UI SIDEBAR (Gestione Personale)
+# -------------------------------
 level, xp_progress = calculate_level(data["user_info"]["xp"])
 
-st.sidebar.markdown(f"# {PAGE_ICON} Status")
+st.sidebar.divider()
+st.sidebar.write(f"Ciao **{current_user}**! 👋")
 st.sidebar.write(f"### Livello {level}")
 st.sidebar.progress(xp_progress / 100)
-st.sidebar.caption(f"XP: {data['user_info']['xp']} / {level * 100} per level up")
-st.sidebar.divider()
+st.sidebar.caption(f"XP: {data['user_info']['xp']}")
 
-with st.sidebar.expander("⚙️ Gestione"):
+with st.sidebar.expander("⚙️ Le tue Abitudini"):
     with st.form("add_habit"):
         st.write("Aggiungi nuova skill")
         new_name = st.text_input("Nome")
@@ -117,20 +137,20 @@ with st.sidebar.expander("⚙️ Gestione"):
         new_sched = st.selectbox("Orario", SCHEDULE_ORDER)
         if st.form_submit_button("Salva"):
             data["config"].append({"name": new_name, "icon": new_icon, "schedule": new_sched, "active": True})
-            save_data(data)
+            save_user_data(current_user, data)
             st.rerun()
             
     rem_opt = [h["name"] for h in data["config"]]
     to_rem = st.selectbox("Rimuovi", [""] + rem_opt)
     if st.sidebar.button("Elimina"):
         data["config"] = [h for h in data["config"] if h["name"] != to_rem]
-        save_data(data)
+        save_user_data(current_user, data)
         st.rerun()
 
 # -------------------------------
 # MAIN PAGE
 # -------------------------------
-st.title(f"🚀 Dashboard | {date.today().strftime('%d %B')}")
+st.title(f"🚀 Dashboard di {current_user}")
 today_str = str(date.today())
 
 if today_str not in data["history"]:
@@ -165,7 +185,8 @@ with col_tasks:
                     multiplier = 1.5 if "Deep" in h_name or "Allenamento" in h_name else 1.0
                     xp_gain = int(10 * multiplier) if chk else -int(10 * multiplier)
                     data["user_info"]["xp"] += xp_gain
-                    save_data(data)
+                    # SALVATAGGIO SPECIFICO UTENTE
+                    save_user_data(current_user, data)
                     st.rerun()
 
 # -------------------------------
@@ -182,12 +203,12 @@ with col_stats:
         gauge={'axis': {'range': [0, 100]}, 'bar': {'color': "#00cc96"}}
     )), use_container_width=True)
     
-    st.markdown("#### 📝 Recap & Note")
+    st.markdown("#### 📝 Diario Personale")
     old_note = data["history"][today_str].get("note", "")
-    note = st.text_area("Cosa è andato bene oggi?", value=old_note, height=150)
+    note = st.text_area("Note del giorno", value=old_note, height=150)
     if note != old_note:
         data["history"][today_str]["note"] = note
-        save_data(data)
+        save_user_data(current_user, data)
 
 st.divider()
 st.caption("Consistency Map (Ultimi 30 giorni)")
