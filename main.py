@@ -4,7 +4,7 @@ import os
 from datetime import date, datetime, timedelta
 import pandas as pd
 import plotly.graph_objects as go
-from plyer import notification
+# Rimosso plyer per compatibilità Cloud
 
 # -------------------------------
 # CONFIGURAZIONE
@@ -13,7 +13,6 @@ FILENAME = "habit_tracker_v2.json"
 PAGE_TITLE = "Protocollo 22 | Master Routine"
 PAGE_ICON = "⚔️"
 
-# Ordine di visualizzazione: Cronologico + Costanti
 SCHEDULE_ORDER = ["🌅 Mattina (Start)", "☀️ Pomeriggio (Grind)", "🌙 Sera (Reset)", "🔄 Tutto il Giorno"]
 
 st.set_page_config(page_title=PAGE_TITLE, layout="wide", page_icon=PAGE_ICON)
@@ -23,28 +22,23 @@ st.set_page_config(page_title=PAGE_TITLE, layout="wide", page_icon=PAGE_ICON)
 # -------------------------------
 
 def load_data():
-    """Carica la routine specifica definita dall'utente."""
     if not os.path.exists(FILENAME):
         return {
             "user_info": {"xp": 0, "level": 1},
             "config": [
-                # --- MATTINA (Attivazione & Focus) ---
                 {"name": "Letto Fatto", "icon": "🛏", "schedule": "🌅 Mattina (Start)", "active": True},
                 {"name": "Luce Solare (15-30m)", "icon": "☀️", "schedule": "🌅 Mattina (Start)", "active": True},
                 {"name": "Pianificazione", "icon": "📝", "schedule": "🌅 Mattina (Start)", "active": True},
                 {"name": "Deep Work (Studio/Dev)", "icon": "💻", "schedule": "🌅 Mattina (Start)", "active": True},
                 
-                # --- POMERIGGIO (Fisico & Task) ---
                 {"name": "Allenamento (Massa/Skill)", "icon": "🏋️‍♂️", "schedule": "☀️ Pomeriggio (Grind)", "active": True},
                 {"name": "Corsa o Nuoto (Cardio)", "icon": "🏃‍♂️", "schedule": "☀️ Pomeriggio (Grind)", "active": True},
                 {"name": "Micro Task", "icon": "✅", "schedule": "☀️ Pomeriggio (Grind)", "active": True},
                 
-                # --- TUTTO IL GIORNO (Salute & Nutrizione) ---
                 {"name": "Idratazione (2L+)", "icon": "💧", "schedule": "🔄 Tutto il Giorno", "active": True},
                 {"name": "Pasto Calorico (Bulking)", "icon": "🍽", "schedule": "🔄 Tutto il Giorno", "active": True},
                 {"name": "Frutto/Yogurt", "icon": "🍎", "schedule": "🔄 Tutto il Giorno", "active": True},
 
-                # --- SERA (Recupero & Chiusura) ---
                 {"name": "Cura Corpo / Skincare", "icon": "🧴", "schedule": "🌙 Sera (Reset)", "active": True},
                 {"name": "Stretching", "icon": "🤸‍♂️", "schedule": "🌙 Sera (Reset)", "active": True},
                 {"name": "Lettura Crescita (20m)", "icon": "📚", "schedule": "🌙 Sera (Reset)", "active": True},
@@ -127,11 +121,9 @@ with col_tasks:
     active_habits = [h for h in data["config"] if h.get("active", True)]
     
     for schedule in SCHEDULE_ORDER:
-        # Filtra abitudini per orario
         sched_habits = [h for h in active_habits if h["schedule"] == schedule]
         if not sched_habits: continue
         
-        # Colore diverso per header in base all'orario
         color = "#FF4B4B" if "Mattina" in schedule else "#FFA500" if "Pomeriggio" in schedule else "#4CAF50" if "Tutto" in schedule else "#6B5B95"
         st.markdown(f"<h3 style='color:{color}'>{schedule}</h3>", unsafe_allow_html=True)
         
@@ -142,7 +134,6 @@ with col_tasks:
                 is_done = data["history"][today_str].get(h_name, False)
                 streak = get_streak(data["history"], h_name)
                 
-                # Label con streak
                 label = f"{habit['icon']} {h_name}"
                 if streak > 2: label += f" 🔥{streak}"
                 
@@ -150,7 +141,6 @@ with col_tasks:
                 
                 if chk != is_done:
                     data["history"][today_str][h_name] = chk
-                    # XP System: +15 XP per Allenamento/Deep Work, +10 per il resto
                     multiplier = 1.5 if "Deep" in h_name or "Allenamento" in h_name else 1.0
                     xp_gain = int(10 * multiplier) if chk else -int(10 * multiplier)
                     data["user_info"]["xp"] += xp_gain
@@ -161,7 +151,6 @@ with col_tasks:
 # STATS ZONE
 # -------------------------------
 with col_stats:
-    # Completamento Giornaliero
     done = sum(1 for k, v in data["history"][today_str].items() if v is True and k != "note")
     total = len(active_habits)
     val = (done / total * 100) if total > 0 else 0
@@ -172,7 +161,6 @@ with col_stats:
         gauge={'axis': {'range': [0, 100]}, 'bar': {'color': "#00cc96"}}
     )), use_container_width=True)
     
-    # Diario
     st.markdown("#### 📝 Recap & Note")
     old_note = data["history"][today_str].get("note", "")
     note = st.text_area("Cosa è andato bene oggi?", value=old_note, height=150)
@@ -180,9 +168,6 @@ with col_stats:
         data["history"][today_str]["note"] = note
         save_data(data)
 
-# -------------------------------
-# HEATMAP CONSISTENCY
-# -------------------------------
 st.divider()
 st.caption("Consistency Map (Ultimi 30 giorni)")
 dates = [str(date.today() - timedelta(days=i)) for i in range(29, -1, -1)]
