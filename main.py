@@ -1,247 +1,201 @@
 import streamlit as st
 import json
+import os
 from datetime import date, datetime, timedelta
 import pandas as pd
 import plotly.graph_objects as go
 from plyer import notification
-import os
 
 # -------------------------------
-# CONFIGURAZIONE E COSTANTI
+# CONFIGURAZIONE
 # -------------------------------
 FILENAME = "habit_tracker_v2.json"
-PAGE_TITLE = "My Habit Flow"
-PAGE_ICON = "⚡"
+PAGE_TITLE = "Protocollo 22 | Master Routine"
+PAGE_ICON = "⚔️"
 
-# Struttura oraria standard
-SCHEDULE_ORDER = ["Mattina", "Pomeriggio", "Sera", "Qualsiasi orario"]
+# Ordine di visualizzazione: Cronologico + Costanti
+SCHEDULE_ORDER = ["🌅 Mattina (Start)", "☀️ Pomeriggio (Grind)", "🌙 Sera (Reset)", "🔄 Tutto il Giorno"]
 
 st.set_page_config(page_title=PAGE_TITLE, layout="wide", page_icon=PAGE_ICON)
 
 # -------------------------------
-# FUNZIONI DI GESTIONE DATI
+# FUNZIONI CORE
 # -------------------------------
 
 def load_data():
-    """Carica i dati o crea una struttura vuota se il file non esiste."""
+    """Carica la routine specifica definita dall'utente."""
     if not os.path.exists(FILENAME):
-        # Dati di default per il primo avvio
         return {
+            "user_info": {"xp": 0, "level": 1},
             "config": [
-                {"name": "Bere acqua", "icon": "💧", "schedule": "Mattina", "active": True},
-                {"name": "Deep Work", "icon": "🧠", "schedule": "Pomeriggio", "active": True},
-                {"name": "Lettura", "icon": "📚", "schedule": "Sera", "active": True}
+                # --- MATTINA (Attivazione & Focus) ---
+                {"name": "Letto Fatto", "icon": "🛏", "schedule": "🌅 Mattina (Start)", "active": True},
+                {"name": "Luce Solare (15-30m)", "icon": "☀️", "schedule": "🌅 Mattina (Start)", "active": True},
+                {"name": "Pianificazione", "icon": "📝", "schedule": "🌅 Mattina (Start)", "active": True},
+                {"name": "Deep Work (Studio/Dev)", "icon": "💻", "schedule": "🌅 Mattina (Start)", "active": True},
+                
+                # --- POMERIGGIO (Fisico & Task) ---
+                {"name": "Allenamento (Massa/Skill)", "icon": "🏋️‍♂️", "schedule": "☀️ Pomeriggio (Grind)", "active": True},
+                {"name": "Corsa o Nuoto (Cardio)", "icon": "🏃‍♂️", "schedule": "☀️ Pomeriggio (Grind)", "active": True},
+                {"name": "Micro Task", "icon": "✅", "schedule": "☀️ Pomeriggio (Grind)", "active": True},
+                
+                # --- TUTTO IL GIORNO (Salute & Nutrizione) ---
+                {"name": "Idratazione (2L+)", "icon": "💧", "schedule": "🔄 Tutto il Giorno", "active": True},
+                {"name": "Pasto Calorico (Bulking)", "icon": "🍽", "schedule": "🔄 Tutto il Giorno", "active": True},
+                {"name": "Frutto/Yogurt", "icon": "🍎", "schedule": "🔄 Tutto il Giorno", "active": True},
+
+                # --- SERA (Recupero & Chiusura) ---
+                {"name": "Cura Corpo / Skincare", "icon": "🧴", "schedule": "🌙 Sera (Reset)", "active": True},
+                {"name": "Stretching", "icon": "🤸‍♂️", "schedule": "🌙 Sera (Reset)", "active": True},
+                {"name": "Lettura Crescita (20m)", "icon": "📚", "schedule": "🌙 Sera (Reset)", "active": True},
+                {"name": "Recap Serale", "icon": "📋", "schedule": "🌙 Sera (Reset)", "active": True},
+                {"name": "Reset Ambiente", "icon": "🧹", "schedule": "🌙 Sera (Reset)", "active": True},
+                {"name": "Sonno Rispettato (7-9h)", "icon": "🛌", "schedule": "🌙 Sera (Reset)", "active": True},
             ],
             "history": {}
         }
     try:
         with open(FILENAME, "r", encoding='utf-8') as f:
             return json.load(f)
-    except Exception as e:
-        st.error(f"Errore nel caricamento file: {e}")
+    except:
         return {}
 
 def save_data(data):
-    """Salva i dati su file JSON."""
     with open(FILENAME, "w", encoding='utf-8') as f:
         json.dump(data, f, indent=4, ensure_ascii=False)
 
+def calculate_level(xp):
+    level = int(xp / 100) + 1
+    progress = xp % 100
+    return level, progress
+
 def get_streak(history, habit_name):
-    """Calcola la streak corrente per una abitudine."""
     streak = 0
     today = date.today()
-    # Controlla a ritroso da ieri (o oggi se completato)
     dates = sorted(history.keys(), reverse=True)
-    
     for d in dates:
         if history[d].get(habit_name, False):
             streak += 1
         else:
-            # Se saltiamo un giorno che non è oggi, la streak si rompe
-            if d != str(today): 
-                break
+            if d != str(today): break
     return streak
 
 # -------------------------------
-# UI: SIDEBAR (Impostazioni e Modifiche)
+# UI SIDEBAR
 # -------------------------------
 data = load_data()
-if "history" not in data: data["history"] = {}
-if "config" not in data: data["config"] = []
+if "user_info" not in data: data["user_info"] = {"xp": 0, "level": 1}
 
-st.sidebar.title(f"{PAGE_ICON} Impostazioni")
+level, xp_progress = calculate_level(data["user_info"]["xp"])
 
-with st.sidebar.expander("➕ Aggiungi/Modifica Abitudine", expanded=False):
-    with st.form("add_habit_form"):
-        new_name = st.text_input("Nome abitudine (es. Meditazione)")
-        new_icon = st.text_input("Icona (es. 🧘)", value="✅")
-        new_schedule = st.selectbox("Momento della giornata", SCHEDULE_ORDER)
-        submitted = st.form_submit_button("Aggiungi Abitudine")
-        
-        if submitted and new_name:
-            # Controlla se esiste già
-            if not any(h['name'] == new_name for h in data['config']):
-                data["config"].append({
-                    "name": new_name,
-                    "icon": new_icon,
-                    "schedule": new_schedule,
-                    "active": True
-                })
-                save_data(data)
-                st.success(f"Aggiunto: {new_name}")
-                st.rerun()
-            else:
-                st.warning("Abitudine già esistente!")
+st.sidebar.markdown(f"# {PAGE_ICON} Status")
+st.sidebar.write(f"### Livello {level}")
+st.sidebar.progress(xp_progress / 100)
+st.sidebar.caption(f"XP: {data['user_info']['xp']} / {level * 100} per level up")
+st.sidebar.divider()
 
-with st.sidebar.expander("🗑️ Gestisci Abitudini Esistenti"):
-    to_remove = st.selectbox("Seleziona da rimuovere", [h["name"] for h in data["config"]])
-    if st.button("Elimina Abitudine"):
-        data["config"] = [h for h in data["config"] if h["name"] != to_remove]
+with st.sidebar.expander("⚙️ Gestione"):
+    with st.form("add_habit"):
+        st.write("Aggiungi nuova skill")
+        new_name = st.text_input("Nome")
+        new_icon = st.text_input("Icona", value="🔹")
+        new_sched = st.selectbox("Orario", SCHEDULE_ORDER)
+        if st.form_submit_button("Salva"):
+            data["config"].append({"name": new_name, "icon": new_icon, "schedule": new_sched, "active": True})
+            save_data(data)
+            st.rerun()
+            
+    rem_opt = [h["name"] for h in data["config"]]
+    to_rem = st.selectbox("Rimuovi", [""] + rem_opt)
+    if st.sidebar.button("Elimina"):
+        data["config"] = [h for h in data["config"] if h["name"] != to_rem]
         save_data(data)
         st.rerun()
 
 # -------------------------------
-# UI: MAIN PAGE (Tracking)
+# MAIN PAGE
 # -------------------------------
-st.title(f"{PAGE_TITLE}")
+st.title(f"🚀 Dashboard | {date.today().strftime('%d %B')}")
 today_str = str(date.today())
 
-# Inizializza il giorno corrente nella history se non esiste
 if today_str not in data["history"]:
     data["history"][today_str] = {}
 
-# Layout principale
-col_track, col_stats = st.columns([2, 1])
+col_tasks, col_stats = st.columns([2, 1])
 
-with col_track:
-    st.subheader(f"📅 Oggi: {datetime.now().strftime('%d %B %Y')}")
+with col_tasks:
+    active_habits = [h for h in data["config"] if h.get("active", True)]
     
-    # Raggruppa abitudini per Schedule
-    habits_by_schedule = {s: [] for s in SCHEDULE_ORDER}
-    for h in data["config"]:
-        if h.get("active", True):
-            habits_by_schedule[h["schedule"]].append(h)
-
-    # Visualizzazione Schede per Orario
-    total_habits_today = 0
-    completed_habits_today = 0
-
     for schedule in SCHEDULE_ORDER:
-        habits = habits_by_schedule[schedule]
-        if not habits:
-            continue
-            
-        st.markdown(f"### {schedule}")
-        # Container stilizzato per ogni blocco orario
+        # Filtra abitudini per orario
+        sched_habits = [h for h in active_habits if h["schedule"] == schedule]
+        if not sched_habits: continue
+        
+        # Colore diverso per header in base all'orario
+        color = "#FF4B4B" if "Mattina" in schedule else "#FFA500" if "Pomeriggio" in schedule else "#4CAF50" if "Tutto" in schedule else "#6B5B95"
+        st.markdown(f"<h3 style='color:{color}'>{schedule}</h3>", unsafe_allow_html=True)
+        
         with st.container(border=True):
-            cols = st.columns(3) # Griglia 3 colonne
-            for idx, habit in enumerate(habits):
+            cols = st.columns(3)
+            for i, habit in enumerate(sched_habits):
                 h_name = habit["name"]
                 is_done = data["history"][today_str].get(h_name, False)
+                streak = get_streak(data["history"], h_name)
                 
-                # Calcolo streak live
-                current_streak = get_streak(data["history"], h_name)
-                streak_display = f"🔥 {current_streak}" if current_streak > 0 else ""
+                # Label con streak
+                label = f"{habit['icon']} {h_name}"
+                if streak > 2: label += f" 🔥{streak}"
                 
-                # Checkbox
-                with cols[idx % 3]:
-                    checked = st.checkbox(
-                        f"{habit['icon']} {h_name} {streak_display}", 
-                        value=is_done, 
-                        key=f"{h_name}_{today_str}"
-                    )
-                    
-                    # Logica salvataggio stato
-                    if checked != is_done:
-                        data["history"][today_str][h_name] = checked
-                        save_data(data)
-                        st.rerun()
+                chk = cols[i % 3].checkbox(label, value=is_done, key=f"{h_name}_{today_str}")
                 
-                total_habits_today += 1
-                if checked: completed_habits_today += 1
+                if chk != is_done:
+                    data["history"][today_str][h_name] = chk
+                    # XP System: +15 XP per Allenamento/Deep Work, +10 per il resto
+                    multiplier = 1.5 if "Deep" in h_name or "Allenamento" in h_name else 1.0
+                    xp_gain = int(10 * multiplier) if chk else -int(10 * multiplier)
+                    data["user_info"]["xp"] += xp_gain
+                    save_data(data)
+                    st.rerun()
 
 # -------------------------------
-# UI: STATISTICHE (Colonna destra)
+# STATS ZONE
 # -------------------------------
 with col_stats:
-    st.markdown("### 📊 Progressi")
+    # Completamento Giornaliero
+    done = sum(1 for k, v in data["history"][today_str].items() if v is True and k != "note")
+    total = len(active_habits)
+    val = (done / total * 100) if total > 0 else 0
     
-    # 1. Circular Progress Bar
-    progress = 0
-    if total_habits_today > 0:
-        progress = (completed_habits_today / total_habits_today) * 100
+    st.plotly_chart(go.Figure(go.Indicator(
+        mode="gauge+number", value=val,
+        title={'text': "Daily Progress"},
+        gauge={'axis': {'range': [0, 100]}, 'bar': {'color': "#00cc96"}}
+    )), use_container_width=True)
     
-    fig_gauge = go.Figure(go.Indicator(
-        mode = "gauge+number",
-        value = progress,
-        title = {'text': "Completamento"},
-        gauge = {
-            'axis': {'range': [0, 100]},
-            'bar': {'color': "#4CAF50" if progress == 100 else "#2196F3"},
-            'bgcolor': "white",
-            'borderwidth': 2,
-            'bordercolor': "gray",
-        }
-    ))
-    fig_gauge.update_layout(height=250, margin=dict(l=20, r=20, t=50, b=20))
-    st.plotly_chart(fig_gauge, use_container_width=True)
-
-    # 2. Nota Veloce
-    st.markdown("#### 📝 Diario")
-    note_key = f"note_{today_str}"
-    current_note = data["history"][today_str].get("note", "")
-    new_note = st.text_area("Riflessioni di oggi...", value=current_note, height=100)
-    if new_note != current_note:
-        data["history"][today_str]["note"] = new_note
+    # Diario
+    st.markdown("#### 📝 Recap & Note")
+    old_note = data["history"][today_str].get("note", "")
+    note = st.text_area("Cosa è andato bene oggi?", value=old_note, height=150)
+    if note != old_note:
+        data["history"][today_str]["note"] = note
         save_data(data)
 
-    # 3. Notifica (Opzionale)
-    if st.button("🔔 Invia promemoria"):
-        try:
-            notification.notify(
-                title="Habit Reminder",
-                message=f"Hai completato {completed_habits_today}/{total_habits_today} abitudini oggi!",
-                timeout=5
-            )
-            st.toast("Notifica inviata!", icon="✅")
-        except:
-            st.warning("Notifiche non supportate su questo sistema.")
-
 # -------------------------------
-# UI: ANALISI SETTIMANALE (Sotto)
+# HEATMAP CONSISTENCY
 # -------------------------------
-st.markdown("---")
-st.subheader("📈 Trend Settimanale")
+st.divider()
+st.caption("Consistency Map (Ultimi 30 giorni)")
+dates = [str(date.today() - timedelta(days=i)) for i in range(29, -1, -1)]
+z_values = []
 
-# Preparazione dati per grafico
-last_7_days = [(date.today() - timedelta(days=i)).strftime("%Y-%m-%d") for i in range(6, -1, -1)]
-daily_scores = []
+for d in dates:
+    day_d = data["history"].get(d, {})
+    cnt = sum(1 for k,v in day_d.items() if v is True and k != "note")
+    z_values.append(cnt)
 
-for d in last_7_days:
-    day_data = data["history"].get(d, {})
-    # Calcolo percentuale basata sulle abitudini attive OGGI (approssimazione) 
-    # In una app pro dovremmo salvare lo snapshot delle abitudini attive per ogni giorno
-    score = 0
-    habits_count = len(data["config"])
-    if habits_count > 0:
-        done_count = sum([1 for k, v in day_data.items() if v is True and k != "note"])
-        score = (done_count / habits_count) * 100
-    daily_scores.append(score)
-
-# Grafico a linee Plotly
-fig_trend = go.Figure()
-fig_trend.add_trace(go.Scatter(
-    x=[d[5:] for d in last_7_days], # Solo MM-DD
-    y=daily_scores,
-    mode='lines+markers',
-    name='Completamento %',
-    line=dict(color='#FF4B4B', width=3),
-    marker=dict(size=8)
+fig_heat = go.Figure(data=go.Heatmap(
+    z=[z_values], x=dates, y=["Focus"],
+    colorscale="Greens", showscale=False
 ))
-fig_trend.update_layout(
-    yaxis=dict(range=[0, 105], title="%"),
-    xaxis=dict(title="Giorno"),
-    height=300,
-    margin=dict(l=20, r=20, t=20, b=20)
-)
-st.plotly_chart(fig_trend, use_container_width=True)
+fig_heat.update_layout(height=120, margin=dict(t=0, b=20, l=0, r=0), xaxis_visible=False)
+st.plotly_chart(fig_heat, use_container_width=True)
