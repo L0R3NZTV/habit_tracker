@@ -14,7 +14,7 @@ PAGE_ICON = "👥"
 SHEET_NAME = "HabitTracker_DB" # <--- IL TUO FOGLIO GOOGLE
 
 # LISTA UTENTI (Modifica questi nomi come vuoi)
-USERS_LIST = ["Lorenzo", "Ospite", "Amico"]
+USERS_LIST = ["Lorenzo", "Ludovica", "Ospite"]
 
 SCHEDULE_ORDER = ["🌅 Mattina (Start)", "☀️ Pomeriggio (Grind)", "🌙 Sera (Reset)", "🔄 Tutto il Giorno"]
 
