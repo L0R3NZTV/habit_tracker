@@ -10,8 +10,8 @@ from oauth2client.service_account import ServiceAccountCredentials
 # CONFIGURAZIONE
 # -------------------------------
 PAGE_TITLE = "Protocollo 22 | Team Edition"
-PAGE_ICON = "👥"
-SHEET_NAME = "HabitTracker_DB1" # <--- IL TUO FOGLIO GOOGLE
+PAGE_ICON = "🔥"
+SHEET_NAME = "HabitTracker_DB" # <--- IL TUO FOGLIO GOOGLE
 
 # LISTA UTENTI (Modifica questi nomi come vuoi)
 USERS_LIST = ["Lorenzo", "Ludovica", "Ospite"]
