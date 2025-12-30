@@ -9,8 +9,8 @@ from oauth2client.service_account import ServiceAccountCredentials
 # -------------------------------
 # CONFIGURAZIONE
 # -------------------------------
-PAGE_TITLE = "Protocollo 22 | Team Edition"
-PAGE_ICON = "🔥"
+PAGE_TITLE = "Protocollo 22 | Nutrition Edition"
+PAGE_ICON = "🥗"
 SHEET_NAME = "HabitTracker_DB"
 USERS_LIST = ["Lorenzo", "Ludovica", "Ospite"]
 
@@ -19,7 +19,7 @@ SCHEDULE_ORDER = ["🌅 Mattina (Start)", "☀️ Pomeriggio (Grind)", "🌙 Ser
 st.set_page_config(page_title=PAGE_TITLE, layout="wide", page_icon=PAGE_ICON)
 
 # -------------------------------
-# CONNESSIONE GOOGLE SHEETS
+# DATABASE
 # -------------------------------
 def get_db_connection():
     scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
@@ -59,7 +59,6 @@ def get_default_profile():
             {"name": "Allenamento", "icon": "🏋️‍♂️", "schedule": "☀️ Pomeriggio (Grind)", "active": True},
             {"name": "Micro Task", "icon": "✅", "schedule": "☀️ Pomeriggio (Grind)", "active": True},
             {"name": "Idratazione", "icon": "💧", "schedule": "🔄 Tutto il Giorno", "active": True},
-            {"name": "Pasto Calorico", "icon": "🍽", "schedule": "🔄 Tutto il Giorno", "active": True},
             {"name": "Stretching", "icon": "🤸‍♂️", "schedule": "🌙 Sera (Reset)", "active": True},
             {"name": "Lettura", "icon": "📚", "schedule": "🌙 Sera (Reset)", "active": True},
         ],
@@ -67,11 +66,22 @@ def get_default_profile():
     }
 
 def get_day_structure():
-    """Mantiene compatibilità con RPG + Dati Medici"""
+    """Struttura avanzata per Nutrizione"""
     return {
         "habits": {}, 
-        "metabolic": { "meals": {}, "symptoms": {}, "body": {}, "sleep": {"hours": 7} },
-        "training_log": { "type": "Riposo", "duration": 0, "intensity": 1 },
+        "metabolic": { 
+            "symptoms": {"fever": False, "fatigue": False, "bloating": False, "sore_throat": False}, 
+            "body": {"weight": 0.0, "morning_hunger": False}, 
+            "sleep": {"hours": 7.0, "quality": 3},
+            # NUOVO DIARIO ALIMENTARE
+            "nutrition_log": {
+                "Colazione": {"desc": "", "tags": []},
+                "Pranzo": {"desc": "", "tags": []},
+                "Cena": {"desc": "", "tags": []},
+                "Snack": {"desc": "", "tags": []}
+            }
+        },
+        "training_log": { "type": "Riposo", "duration": 0, "intensity": 1, "notes": "" },
         "notes": ""
     }
 
@@ -88,13 +98,21 @@ def get_streak(history, habit_name):
     today = date.today()
     dates = sorted(history.keys(), reverse=True)
     for d in dates:
-        # Cerca nei dati habits (annidati)
-        habits = history[d].get("habits", {})
-        if habits.get(habit_name, False):
+        if history[d].get("habits", {}).get(habit_name, False):
             streak += 1
         else:
             if d != str(today): break
     return streak
+
+def check_medical_alerts(day_rec):
+    alerts = []
+    sym = day_rec["metabolic"]["symptoms"]
+    train = day_rec["training_log"]
+    
+    if sym["fever"] and train["type"] != "Riposo":
+        alerts.append("⛔ **CRITICO:** Hai la febbre. Niente allenamento oggi.")
+    
+    return alerts
 
 # -------------------------------
 # UI START
@@ -113,10 +131,11 @@ else:
 today_str = str(date.today())
 if today_str not in user_data["history"]:
     user_data["history"][today_str] = get_day_structure()
-
-# Alias comodi
 day_rec = user_data["history"][today_str]
-if "habits" not in day_rec: day_rec["habits"] = {} # Fix retrocompatibilità
+
+# Fix Retrocompatibilità (se mancano chiavi nuove)
+if "metabolic" not in day_rec: day_rec["metabolic"] = get_day_structure()["metabolic"]
+if "nutrition_log" not in day_rec["metabolic"]: day_rec["metabolic"]["nutrition_log"] = get_day_structure()["metabolic"]["nutrition_log"]
 
 # Sidebar XP
 lvl, prog = calculate_level(user_data["user_info"]["xp"])
@@ -125,47 +144,36 @@ st.sidebar.write(f"Livello **{lvl}**")
 st.sidebar.progress(prog/100)
 st.sidebar.caption(f"XP: {user_data['user_info']['xp']}")
 
-# Gestione Config
-with st.sidebar.expander("⚙️ Modifica Abitudini"):
+# Config Abitudini Rapida
+with st.sidebar.expander("⚙️ Gestione"):
     with st.form("add"):
         n = st.text_input("Nome")
-        i = st.text_input("Icona", "🔹")
         s = st.selectbox("Orario", SCHEDULE_ORDER)
-        if st.form_submit_button("Salva"):
-            user_data["config"].append({"name": n, "icon": i, "schedule": s, "active": True})
-            save_user_data(current_user, user_data)
-            st.rerun()
-    if st.sidebar.button("Rimuovi Ultima"): # Semplificato per velocità
-        if user_data["config"]:
-            user_data["config"].pop()
+        if st.form_submit_button("Aggiungi"):
+            user_data["config"].append({"name": n, "icon": "🔹", "schedule": s, "active": True})
             save_user_data(current_user, user_data)
             st.rerun()
 
 # -------------------------------
-# MAIN PAGE (TAB SYSTEM)
+# MAIN PAGE
 # -------------------------------
 st.title(f"🚀 Dashboard di {current_user}")
 
-# Qui usiamo i tab per nascondere la parte medica se non la vuoi vedere subito
-tab_rpg, tab_medico = st.tabs(["🔥 Habit RPG", "🩺 Area Medica"])
+tab_rpg, tab_medico = st.tabs(["🔥 Habit RPG", "🩺 Area Medica & Nutrizione"])
 
-# --- TAB 1: IL TUO DESIGN RICHIESTO ---
+# --- TAB 1: HABIT RPG CLASSICO ---
 with tab_rpg:
-    # Layout a due colonne: Task a sinistra (2), Stats a destra (1)
     col_tasks, col_stats = st.columns([2, 1])
 
     with col_tasks:
         active_habits = [h for h in user_data["config"] if h.get("active", True)]
-        
         for schedule in SCHEDULE_ORDER:
             sched_habits = [h for h in active_habits if h["schedule"] == schedule]
             if not sched_habits: continue
             
-            # Header colorati come nel tuo codice
             color = "#FF4B4B" if "Mattina" in schedule else "#FFA500" if "Pomeriggio" in schedule else "#4CAF50" if "Tutto" in schedule else "#6B5B95"
             st.markdown(f"<h3 style='color:{color}'>{schedule}</h3>", unsafe_allow_html=True)
             
-            # Container con le checkbox
             with st.container(border=True):
                 cols = st.columns(3)
                 for i, habit in enumerate(sched_habits):
@@ -173,87 +181,117 @@ with tab_rpg:
                     is_done = day_rec["habits"].get(h_name, False)
                     streak = get_streak(user_data["history"], h_name)
                     
-                    label = f"{habit['icon']} {h_name}"
-                    if streak > 2: label += f" 🔥{streak}"
-                    
+                    label = f"{habit['icon']} {h_name}" + (f" 🔥{streak}" if streak > 2 else "")
                     chk = cols[i % 3].checkbox(label, value=is_done, key=f"{h_name}_{today_str}")
                     
                     if chk != is_done:
                         day_rec["habits"][h_name] = chk
-                        # XP Logic
-                        mult = 1.5 if "Deep" in h_name or "Allenamento" in h_name else 1.0
-                        gain = int(10 * mult) if chk else -int(10 * mult)
-                        user_data["user_info"]["xp"] += gain
+                        gain = 15 if "Deep" in h_name or "Allenamento" in h_name else 10
+                        user_data["user_info"]["xp"] += gain if chk else -gain
                         save_user_data(current_user, user_data)
                         st.rerun()
 
     with col_stats:
-        # Gauge Chart
         done = sum(day_rec["habits"].values())
         total = len(active_habits)
         val = (done / total * 100) if total > 0 else 0
+        st.plotly_chart(go.Figure(go.Indicator(mode="gauge+number", value=val, title={'text': "Daily Progress"}, gauge={'axis': {'range': [0, 100]}, 'bar': {'color': "#00cc96"}})), use_container_width=True)
         
-        st.plotly_chart(go.Figure(go.Indicator(
-            mode="gauge+number", value=val,
-            title={'text': "Daily Progress"},
-            gauge={'axis': {'range': [0, 100]}, 'bar': {'color': "#00cc96"}}
-        )), use_container_width=True)
-        
-        # Note
-        st.markdown("#### 📝 Diario Personale")
+        st.markdown("#### 📝 Note Rapide")
         old_note = day_rec.get("notes", "")
-        note = st.text_area("Note del giorno", value=old_note, height=150)
+        note = st.text_area("Diario", value=old_note, height=150)
         if note != old_note:
             day_rec["notes"] = note
             save_user_data(current_user, user_data)
 
-    # Heatmap sotto tutto
-    st.divider()
-    st.caption("Consistency Map (Ultimi 30 giorni)")
-    dates = [str(date.today() - timedelta(days=i)) for i in range(29, -1, -1)]
-    z_values = []
-    for d in dates:
-        day_d = user_data["history"].get(d, {})
-        # Compatibilità lettura abitudini
-        habs = day_d.get("habits", {})
-        cnt = sum(1 for v in habs.values() if v is True)
-        z_values.append(cnt)
-
-    fig_heat = go.Figure(data=go.Heatmap(
-        z=[z_values], x=dates, y=["Focus"],
-        colorscale="Greens", showscale=False
-    ))
-    fig_heat.update_layout(height=120, margin=dict(t=0, b=20, l=0, r=0), xaxis_visible=False)
-    st.plotly_chart(fig_heat, use_container_width=True)
-
-# --- TAB 2: AREA MEDICA (Nascosta ma presente) ---
+# --- TAB 2: AREA MEDICA & NUTRIZIONE ---
 with tab_medico:
-    st.info("Area monitoraggio salute & metabolismo")
-    # Qui inseriamo i controlli medici semplificati
-    if "metabolic" not in day_rec: day_rec["metabolic"] = get_day_structure()["metabolic"]
+    alerts = check_medical_alerts(day_rec)
+    if alerts:
+        for a in alerts: st.error(a)
+    
     meta = day_rec["metabolic"]
     
-    c1, c2 = st.columns(2)
-    with c1:
-        st.write("🩺 **Sintomi**")
-        sym = meta.get("symptoms", {})
-        sym["fever"] = st.toggle("Febbre", sym.get("fever", False))
-        sym["fatigue"] = st.toggle("Stanchezza", sym.get("fatigue", False))
+    # --- SEZIONE 1: STATUS VITALE (Semafori) ---
+    col_kpi1, col_kpi2, col_kpi3, col_kpi4 = st.columns(4)
+    
+    # Calcolo KPI Nutrizione
+    nut_log = meta["nutrition_log"]
+    pasti_fatti = sum(1 for m in nut_log.values() if m["desc"].strip() != "")
+    proteine_tot = sum(1 for m in nut_log.values() if "Proteine" in m["tags"])
+    
+    col_kpi1.metric("Pasti", f"{pasti_fatti}/4", delta="Goal" if pasti_fatti >= 3 else "Low", delta_color="normal" if pasti_fatti>=3 else "off")
+    col_kpi2.metric("Proteine", f"{proteine_tot} Pasti", delta="Target" if proteine_tot >= 3 else "Low", delta_color="normal" if proteine_tot>=3 else "off")
+    col_kpi3.metric("Sonno", f"{meta['sleep']['hours']}h", delta_color="normal" if meta['sleep']['hours']>=7 else "inverse")
+    col_kpi4.metric("Fame Mattutina", "SI" if meta["body"]["morning_hunger"] else "NO")
+
+    st.divider()
+
+    # --- SEZIONE 2: DIARIO ALIMENTARE DETTAGLIATO ---
+    st.subheader("🍽️ Diario Nutrizionale")
+    st.caption("Scrivi cosa hai mangiato e tagga i macro principali per verificare gli obiettivi.")
+
+    # Colonne per i pasti
+    c_pasti1, c_pasti2 = st.columns(2)
+    
+    meals_keys = list(nut_log.keys()) # Colazione, Pranzo, Cena, Snack
+    
+    # Iteriamo sui pasti per creare le schede
+    for i, meal_name in enumerate(meals_keys):
+        # Layout a griglia 2x2
+        col_ref = c_pasti1 if i % 2 == 0 else c_pasti2
         
-        st.write("⚖️ **Corpo**")
-        w = meta.get("body", {}).get("weight", 0.0) or 0.0
-        new_w = st.number_input("Peso (kg)", value=float(w), step=0.1)
-        if new_w > 0: 
-            if "body" not in meta: meta["body"] = {}
-            meta["body"]["weight"] = new_w
+        with col_ref.expander(f"🥣 {meal_name}", expanded=True):
+            current_meal = nut_log[meal_name]
+            
+            # Input descrizione
+            desc = st.text_input(f"Cosa hai mangiato a {meal_name}?", value=current_meal["desc"], key=f"desc_{meal_name}")
+            
+            # Input Tags (Multiselect usato come chips)
+            tags = st.multiselect(
+                "Contiene:", 
+                ["Proteine 🍗", "Carboidrati 🍚", "Grassi Buoni 🥑", "Verdure 🥦", "Zuccheri 🍭"], 
+                default=current_meal["tags"],
+                key=f"tags_{meal_name}"
+            )
+            
+            # Salvataggio automatico se cambia qualcosa
+            if desc != current_meal["desc"] or tags != current_meal["tags"]:
+                nut_log[meal_name]["desc"] = desc
+                nut_log[meal_name]["tags"] = tags
+                save_user_data(current_user, user_data)
+                st.toast(f"{meal_name} salvato!")
 
-    with c2:
-        st.write("🍽️ **Nutrizione**")
-        # Semplice counter pasti
-        pasti = st.slider("Pasti Mangiati", 0, 5, 3)
-        st.write("😴 **Sonno**")
-        sonno = st.number_input("Ore dormite", value=7.0, step=0.5)
+    st.divider()
 
-    if st.button("Salva Dati Medici"):
+    # --- SEZIONE 3: SALUTE & TRAINING ---
+    c_salute, c_gym = st.columns(2)
+    
+    with c_salute:
+        st.subheader("🩺 Corpo & Sintomi")
+        sym = meta["symptoms"]
+        col_s1, col_s2 = st.columns(2)
+        sym["fever"] = col_s1.toggle("Febbre", sym["fever"])
+        sym["sore_throat"] = col_s2.toggle("Mal di Gola", sym["sore_throat"])
+        sym["fatigue"] = col_s1.toggle("Stanchezza", sym["fatigue"])
+        sym["bloating"] = col_s2.toggle("Gonfiore", sym["bloating"])
+        
+        st.write("**Monitoraggio**")
+        w_curr = meta["body"].get("weight", 0.0)
+        new_w = st.number_input("Peso (kg)", value=float(w_curr), step=0.1)
+        if new_w > 0: meta["body"]["weight"] = new_w
+        meta["body"]["morning_hunger"] = st.checkbox("Fame al risveglio?", meta["body"]["morning_hunger"])
+
+    with c_gym:
+        st.subheader("🏋️ Training Log")
+        tr = day_rec["training_log"]
+        tr["type"] = st.selectbox("Attività", ["Riposo", "Calisthenics", "Pesi", "Cardio", "Mobility"], index=["Riposo", "Calisthenics", "Pesi", "Cardio", "Mobility"].index(tr["type"]))
+        
+        c_g1, c_g2 = st.columns(2)
+        tr["duration"] = c_g1.number_input("Minuti", value=int(tr["duration"]), step=5)
+        tr["intensity"] = c_g2.slider("RPE (1-10)", 1, 10, tr["intensity"])
+        tr["notes"] = st.text_area("Note Workout", tr["notes"], height=68)
+
+    if st.button("💾 Salva Dati Medici", type="primary"):
         save_user_data(current_user, user_data)
-        st.success("Salvato")
+        st.success("Tutti i dati aggiornati!")
