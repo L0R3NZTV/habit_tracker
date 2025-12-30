@@ -9,7 +9,7 @@ from oauth2client.service_account import ServiceAccountCredentials
 # -------------------------------
 # CONFIGURAZIONE
 # -------------------------------
-PAGE_TITLE = "Protocollo 22 | Nutrition Edition"
+PAGE_TITLE = "Protocollo 22 | Nutrition Pro"
 PAGE_ICON = "🥗"
 SHEET_NAME = "HabitTracker_DB"
 USERS_LIST = ["Lorenzo", "Ludovica", "Ospite"]
@@ -59,6 +59,7 @@ def get_default_profile():
             {"name": "Allenamento", "icon": "🏋️‍♂️", "schedule": "☀️ Pomeriggio (Grind)", "active": True},
             {"name": "Micro Task", "icon": "✅", "schedule": "☀️ Pomeriggio (Grind)", "active": True},
             {"name": "Idratazione", "icon": "💧", "schedule": "🔄 Tutto il Giorno", "active": True},
+            {"name": "Pasto Calorico", "icon": "🍽", "schedule": "🔄 Tutto il Giorno", "active": True},
             {"name": "Stretching", "icon": "🤸‍♂️", "schedule": "🌙 Sera (Reset)", "active": True},
             {"name": "Lettura", "icon": "📚", "schedule": "🌙 Sera (Reset)", "active": True},
         ],
@@ -66,19 +67,20 @@ def get_default_profile():
     }
 
 def get_day_structure():
-    """Struttura avanzata per Nutrizione"""
+    """Struttura avanzata con 2 Snack"""
     return {
         "habits": {}, 
         "metabolic": { 
             "symptoms": {"fever": False, "fatigue": False, "bloating": False, "sore_throat": False}, 
             "body": {"weight": 0.0, "morning_hunger": False}, 
             "sleep": {"hours": 7.0, "quality": 3},
-            # NUOVO DIARIO ALIMENTARE
+            # DIARIO ALIMENTARE ESTESO
             "nutrition_log": {
                 "Colazione": {"desc": "", "tags": []},
                 "Pranzo": {"desc": "", "tags": []},
+                "Snack 1": {"desc": "", "tags": []},
                 "Cena": {"desc": "", "tags": []},
-                "Snack": {"desc": "", "tags": []}
+                "Snack 2": {"desc": "", "tags": []}
             }
         },
         "training_log": { "type": "Riposo", "duration": 0, "intensity": 1, "notes": "" },
@@ -133,9 +135,16 @@ if today_str not in user_data["history"]:
     user_data["history"][today_str] = get_day_structure()
 day_rec = user_data["history"][today_str]
 
-# Fix Retrocompatibilità (se mancano chiavi nuove)
+# Fix Retrocompatibilità Smart
 if "metabolic" not in day_rec: day_rec["metabolic"] = get_day_structure()["metabolic"]
-if "nutrition_log" not in day_rec["metabolic"]: day_rec["metabolic"]["nutrition_log"] = get_day_structure()["metabolic"]["nutrition_log"]
+# Se manca lo Snack 2 nel log esistente, lo aggiunge
+curr_log = day_rec["metabolic"]["nutrition_log"]
+if "Snack 2" not in curr_log:
+    # Migrazione al volo: rinomina Snack -> Snack 1 se necessario o crea nuovi
+    if "Snack" in curr_log:
+        curr_log["Snack 1"] = curr_log.pop("Snack")
+    if "Snack 1" not in curr_log: curr_log["Snack 1"] = {"desc": "", "tags": []}
+    curr_log["Snack 2"] = {"desc": "", "tags": []}
 
 # Sidebar XP
 lvl, prog = calculate_level(user_data["user_info"]["xp"])
@@ -215,50 +224,49 @@ with tab_medico:
     # --- SEZIONE 1: STATUS VITALE (Semafori) ---
     col_kpi1, col_kpi2, col_kpi3, col_kpi4 = st.columns(4)
     
-    # Calcolo KPI Nutrizione
+    # Calcolo KPI Nutrizione (aggiornato per 5 pasti)
     nut_log = meta["nutrition_log"]
     pasti_fatti = sum(1 for m in nut_log.values() if m["desc"].strip() != "")
-    proteine_tot = sum(1 for m in nut_log.values() if "Proteine" in m["tags"])
+    proteine_tot = sum(1 for m in nut_log.values() if "Proteine 🍗" in m["tags"])
     
-    col_kpi1.metric("Pasti", f"{pasti_fatti}/4", delta="Goal" if pasti_fatti >= 3 else "Low", delta_color="normal" if pasti_fatti>=3 else "off")
+    col_kpi1.metric("Pasti", f"{pasti_fatti}/5", delta="Goal" if pasti_fatti >= 4 else "Low", delta_color="normal" if pasti_fatti>=4 else "off")
     col_kpi2.metric("Proteine", f"{proteine_tot} Pasti", delta="Target" if proteine_tot >= 3 else "Low", delta_color="normal" if proteine_tot>=3 else "off")
     col_kpi3.metric("Sonno", f"{meta['sleep']['hours']}h", delta_color="normal" if meta['sleep']['hours']>=7 else "inverse")
     col_kpi4.metric("Fame Mattutina", "SI" if meta["body"]["morning_hunger"] else "NO")
 
     st.divider()
 
-    # --- SEZIONE 2: DIARIO ALIMENTARE DETTAGLIATO ---
-    st.subheader("🍽️ Diario Nutrizionale")
-    st.caption("Scrivi cosa hai mangiato e tagga i macro principali per verificare gli obiettivi.")
+    # --- SEZIONE 2: DIARIO ALIMENTARE DETTAGLIATO (5 PASTI) ---
+    st.subheader("🍽️ Diario Nutrizionale (5 Pasti)")
+    st.caption("Snack 1 = Metà mattina / Snack 2 = Pomeriggio o Pre-nanna")
 
-    # Colonne per i pasti
     c_pasti1, c_pasti2 = st.columns(2)
     
-    meals_keys = list(nut_log.keys()) # Colazione, Pranzo, Cena, Snack
+    # Ordine logico di visualizzazione
+    ordered_meals = ["Colazione", "Snack 1", "Pranzo", "Snack 2", "Cena"]
     
-    # Iteriamo sui pasti per creare le schede
-    for i, meal_name in enumerate(meals_keys):
-        # Layout a griglia 2x2
+    for i, meal_name in enumerate(ordered_meals):
+        # Layout a griglia: colonna sinistra o destra
         col_ref = c_pasti1 if i % 2 == 0 else c_pasti2
         
+        # Recupera dati (con fallback se la chiave non esistesse per qualche motivo strano)
+        current_meal = nut_log.get(meal_name, {"desc": "", "tags": []})
+        
         with col_ref.expander(f"🥣 {meal_name}", expanded=True):
-            current_meal = nut_log[meal_name]
-            
             # Input descrizione
-            desc = st.text_input(f"Cosa hai mangiato a {meal_name}?", value=current_meal["desc"], key=f"desc_{meal_name}")
+            desc = st.text_input(f"Cosa hai mangiato?", value=current_meal["desc"], key=f"desc_{meal_name}")
             
-            # Input Tags (Multiselect usato come chips)
+            # Input Tags
             tags = st.multiselect(
-                "Contiene:", 
+                "Macros:", 
                 ["Proteine 🍗", "Carboidrati 🍚", "Grassi Buoni 🥑", "Verdure 🥦", "Zuccheri 🍭"], 
                 default=current_meal["tags"],
                 key=f"tags_{meal_name}"
             )
             
-            # Salvataggio automatico se cambia qualcosa
+            # Salvataggio
             if desc != current_meal["desc"] or tags != current_meal["tags"]:
-                nut_log[meal_name]["desc"] = desc
-                nut_log[meal_name]["tags"] = tags
+                nut_log[meal_name] = {"desc": desc, "tags": tags}
                 save_user_data(current_user, user_data)
                 st.toast(f"{meal_name} salvato!")
 
