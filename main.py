@@ -2,26 +2,23 @@ import streamlit as st
 import json
 import pandas as pd
 import plotly.graph_objects as go
-from datetime import date, timedelta
+import plotly.express as px
+from datetime import date, datetime, timedelta
 import gspread
 from oauth2client.service_account import ServiceAccountCredentials
 
 # -------------------------------
 # CONFIGURAZIONE
 # -------------------------------
-PAGE_TITLE = "Protocollo 22 | Team Edition"
-PAGE_ICON = "🔥"
-SHEET_NAME = "HabitTracker_DB" # <--- IL TUO FOGLIO GOOGLE
-
-# LISTA UTENTI (Modifica questi nomi come vuoi)
-USERS_LIST = ["Lorenzo", "Ludovica", "Ospite"]
-
-SCHEDULE_ORDER = ["🌅 Mattina (Start)", "☀️ Pomeriggio (Grind)", "🌙 Sera (Reset)", "🔄 Tutto il Giorno"]
+PAGE_TITLE = "Metabolic Stabilizer"
+PAGE_ICON = "🧬"
+SHEET_NAME = "HabitTracker_DB" # Assicurati che sia corretto
+USERS_LIST = ["Lorenzo", "Ludovica"]
 
 st.set_page_config(page_title=PAGE_TITLE, layout="wide", page_icon=PAGE_ICON)
 
 # -------------------------------
-# CONNESSIONE GOOGLE SHEETS
+# CONNESSIONE DB (GOOGLE SHEETS)
 # -------------------------------
 def get_db_connection():
     scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
@@ -29,200 +26,278 @@ def get_db_connection():
     client = gspread.authorize(creds)
     return client
 
-def get_empty_profile():
-    """Genera un profilo vuoto nuovo di zecca."""
-    return {
-        "user_info": {"xp": 0, "level": 1},
-        "config": [
-            {"name": "Letto Fatto", "icon": "🛏", "schedule": "🌅 Mattina (Start)", "active": True},
-            {"name": "Luce Solare (15-30m)", "icon": "☀️", "schedule": "🌅 Mattina (Start)", "active": True},
-            {"name": "Pianificazione", "icon": "📝", "schedule": "🌅 Mattina (Start)", "active": True},
-            {"name": "Deep Work (Studio/Dev)", "icon": "💻", "schedule": "🌅 Mattina (Start)", "active": True},
-            {"name": "Allenamento (Massa/Skill)", "icon": "🏋️‍♂️", "schedule": "☀️ Pomeriggio (Grind)", "active": True},
-            {"name": "Corsa o Nuoto (Cardio)", "icon": "🏃‍♂️", "schedule": "☀️ Pomeriggio (Grind)", "active": True},
-            {"name": "Micro Task", "icon": "✅", "schedule": "☀️ Pomeriggio (Grind)", "active": True},
-            {"name": "Idratazione (2L+)", "icon": "💧", "schedule": "🔄 Tutto il Giorno", "active": True},
-            {"name": "Pasto Calorico (Bulking)", "icon": "🍽", "schedule": "🔄 Tutto il Giorno", "active": True},
-            {"name": "Frutto/Yogurt", "icon": "🍎", "schedule": "🔄 Tutto il Giorno", "active": True},
-            {"name": "Cura Corpo / Skincare", "icon": "🧴", "schedule": "🌙 Sera (Reset)", "active": True},
-            {"name": "Stretching", "icon": "🤸‍♂️", "schedule": "🌙 Sera (Reset)", "active": True},
-            {"name": "Lettura Crescita (20m)", "icon": "📚", "schedule": "🌙 Sera (Reset)", "active": True},
-            {"name": "Recap Serale", "icon": "📋", "schedule": "🌙 Sera (Reset)", "active": True},
-            {"name": "Reset Ambiente", "icon": "🧹", "schedule": "🌙 Sera (Reset)", "active": True},
-            {"name": "Sonno Rispettato (7-9h)", "icon": "🛌", "schedule": "🌙 Sera (Reset)", "active": True},
-        ],
-        "history": {}
-    }
-
-def load_all_db():
-    """Scarica TUTTO il database (tutti gli utenti)."""
+def load_db():
     try:
         client = get_db_connection()
         sheet = client.open(SHEET_NAME).sheet1
         raw_data = sheet.acell('A1').value
-        if not raw_data:
-            return {}
+        if not raw_data: return {}
         return json.loads(raw_data)
-    except:
-        return {}
+    except: return {}
 
-def save_user_data(username, user_data):
-    """Salva SOLO i dati dell'utente corrente nel database generale."""
+def save_db(full_db):
     try:
-        # 1. Scarica tutto il DB attuale (per non sovrascrivere gli altri)
-        full_db = load_all_db()
-        
-        # 2. Aggiorna solo questo utente
-        full_db[username] = user_data
-        
-        # 3. Ricarica tutto su Google Sheets
         client = get_db_connection()
         sheet = client.open(SHEET_NAME).sheet1
-        json_str = json.dumps(full_db, ensure_ascii=False)
-        sheet.update_acell('A1', json_str)
+        sheet.update_acell('A1', json.dumps(full_db, ensure_ascii=False))
     except Exception as e:
         st.error(f"Errore salvataggio: {e}")
 
-# ... helper functions standard ...
-def calculate_level(xp):
-    level = int(xp / 100) + 1
-    progress = xp % 100
-    return level, progress
+# -------------------------------
+# FUNZIONI DI LOGICA E REGOLE
+# -------------------------------
+def check_alerts(day_data):
+    """Il cervello dell'app: analizza i dati e genera warning."""
+    alerts = []
+    
+    # Dati Nutrizione
+    nut = day_data.get("nutrition", {})
+    meals_count = sum([nut.get("breakfast", False), nut.get("lunch", False), nut.get("dinner", False)])
+    
+    # Dati Salute
+    health = day_data.get("health", {})
+    training = day_data.get("training", {})
+    sleep = day_data.get("sleep", {})
 
-def get_streak(history, habit_name):
-    streak = 0
-    today = date.today()
-    dates = sorted(history.keys(), reverse=True)
-    for d in dates:
-        if history[d].get(habit_name, False):
-            streak += 1
-        else:
-            if d != str(today): break
-    return streak
+    # REGOLA 1: Febbre + Allenamento
+    if health.get("fever", False) and training.get("type", "Riposo") != "Riposo":
+        alerts.append("⚠️ **PERICOLO:** Hai la febbre, non allenarti! Il sistema immunitario ha priorità.")
+
+    # REGOLA 2: Digiuno
+    if meals_count < 2:
+        alerts.append("🍽️ **Alert Alimentazione:** Hai saltato troppi pasti. Il metabolismo rallenta se non mangi.")
+
+    # REGOLA 3: Sonno scarso + Allenamento Intenso
+    if sleep.get("hours", 7) < 6 and training.get("intensity", 1) > 3:
+        alerts.append("💤 **Recupero Compromesso:** Hai dormito poco. Riduci l'intensità dell'allenamento oggi.")
+
+    # REGOLA 4: Sintomi ricorrenti
+    if health.get("sore_throat", False) and health.get("fatigue", False):
+        alerts.append("🛡️ **Immunità:** Gola + Stanchezza rilevate. Aumenta Vitamina C e riposo.")
+
+    return alerts
+
+def get_day_structure():
+    """Struttura dati vuota per un nuovo giorno."""
+    return {
+        "nutrition": {
+            "breakfast": False, "lunch": False, "dinner": False,
+            "snacks": 0, "protein_goal": False, "carbs_goal": False, 
+            "hunger": 3, "regularity": "Media"
+        },
+        "training": {
+            "type": "Riposo", "duration": 0, "intensity": 1, 
+            "soreness": False, "post_feeling": "Uguale"
+        },
+        "health": {
+            "fever": False, "sore_throat": False, "cold": False, 
+            "headache": False, "fatigue": False, "bloating": False,
+            "morning_hunger": False, "weight": None
+        },
+        "sleep": {
+            "hours": 7.0, "quality": 3, "regular_time": True
+        },
+        "notes": ""
+    }
 
 # -------------------------------
-# SELETTORE UTENTE (SIDEBAR)
+# UI SIDEBAR
 # -------------------------------
 st.sidebar.title(f"{PAGE_ICON} Login")
-current_user = st.sidebar.selectbox("Chi sta usando l'app?", USERS_LIST)
+current_user = st.sidebar.selectbox("Utente", USERS_LIST)
 
-# Caricamento Dati Specifici Utente
-full_db = load_all_db()
+# Selettore Data (per inserire dati passati)
+selected_date = st.sidebar.date_input("Data Diario", date.today())
+selected_date_str = str(selected_date)
 
-# Se l'utente non esiste nel DB, crealo vuoto
-if current_user not in full_db:
-    data = get_empty_profile()
+# Caricamento DB
+full_db = load_db()
+if current_user not in full_db: full_db[current_user] = {}
+user_history = full_db[current_user]
+
+# Carica dati del giorno o crea vuoti
+if selected_date_str not in user_history:
+    day_data = get_day_structure()
 else:
-    data = full_db[current_user]
-
-# Logic check: user_info missing fix
-if "user_info" not in data: data["user_info"] = {"xp": 0, "level": 1}
-
-# -------------------------------
-# UI SIDEBAR (Gestione Personale)
-# -------------------------------
-level, xp_progress = calculate_level(data["user_info"]["xp"])
-
-st.sidebar.divider()
-st.sidebar.write(f"Ciao **{current_user}**! 👋")
-st.sidebar.write(f"### Livello {level}")
-st.sidebar.progress(xp_progress / 100)
-st.sidebar.caption(f"XP: {data['user_info']['xp']}")
-
-with st.sidebar.expander("⚙️ Le tue Abitudini"):
-    with st.form("add_habit"):
-        st.write("Aggiungi nuova skill")
-        new_name = st.text_input("Nome")
-        new_icon = st.text_input("Icona", value="🔹")
-        new_sched = st.selectbox("Orario", SCHEDULE_ORDER)
-        if st.form_submit_button("Salva"):
-            data["config"].append({"name": new_name, "icon": new_icon, "schedule": new_sched, "active": True})
-            save_user_data(current_user, data)
-            st.rerun()
-            
-    rem_opt = [h["name"] for h in data["config"]]
-    to_rem = st.selectbox("Rimuovi", [""] + rem_opt)
-    if st.sidebar.button("Elimina"):
-        data["config"] = [h for h in data["config"] if h["name"] != to_rem]
-        save_user_data(current_user, data)
-        st.rerun()
+    # Merge per evitare crash se aggiungi campi nuovi in futuro
+    saved_data = user_history[selected_date_str]
+    default = get_day_structure()
+    # Aggiorna il default con i dati salvati (ricorsivo semplice)
+    for category in default:
+        if category in saved_data:
+            if isinstance(saved_data[category], dict):
+                default[category].update(saved_data[category])
+            else:
+                default[category] = saved_data[category]
+    day_data = default
 
 # -------------------------------
-# MAIN PAGE
+# MAIN DASHBOARD
 # -------------------------------
-st.title(f"🚀 Dashboard di {current_user}")
-today_str = str(date.today())
+st.title(f"Dashboard del {selected_date.strftime('%d %B')}")
 
-if today_str not in data["history"]:
-    data["history"][today_str] = {}
+# TAB SYSTEM
+tab1, tab2, tab3, tab4 = st.tabs(["🚦 Status & Input", "🩺 Sintomi & Corpo", "🏋️ Allenamento", "📈 Trends"])
 
-col_tasks, col_stats = st.columns([2, 1])
+# --- TAB 1: STATUS & NUTRITION ---
+with tab1:
+    # 1. ALERT INTELLIGENTI
+    alerts = check_alerts(day_data)
+    if alerts:
+        for alert in alerts:
+            st.warning(alert)
+    else:
+        st.success("✅ Nessun segnale critico rilevato. Keep going!")
 
-with col_tasks:
-    active_habits = [h for h in data["config"] if h.get("active", True)]
+    st.divider()
+
+    # 2. INPUT NUTRIZIONE RAPIDA
+    col_nut1, col_nut2 = st.columns(2)
     
-    for schedule in SCHEDULE_ORDER:
-        sched_habits = [h for h in active_habits if h["schedule"] == schedule]
-        if not sched_habits: continue
+    with col_nut1:
+        st.subheader("🍽️ Pasti Fondamentali")
+        n = day_data["nutrition"]
+        c1, c2, c3 = st.columns(3)
+        n["breakfast"] = c1.checkbox("Colazione", n["breakfast"])
+        n["lunch"] = c2.checkbox("Pranzo", n["lunch"])
+        n["dinner"] = c3.checkbox("Cena", n["dinner"])
         
-        color = "#FF4B4B" if "Mattina" in schedule else "#FFA500" if "Pomeriggio" in schedule else "#4CAF50" if "Tutto" in schedule else "#6B5B95"
-        st.markdown(f"<h3 style='color:{color}'>{schedule}</h3>", unsafe_allow_html=True)
+        n["snacks"] = st.slider("Numero Spuntini", 0, 5, n["snacks"])
+    
+    with col_nut2:
+        st.subheader("🧬 Target Metabolici")
+        n["protein_goal"] = st.checkbox("🥩 Target Proteine Raggiunto", n["protein_goal"])
+        n["carbs_goal"] = st.checkbox("🍚 Carboidrati Sufficienti", n["carbs_goal"])
+        n["hunger"] = st.select_slider("Fame Percepita (1=Piena, 5=Affamata)", options=[1,2,3,4,5], value=n["hunger"])
+        n["regularity"] = st.select_slider("Regolarità Orari", options=["Caos", "Media", "Svizzera"], value=n["regularity"])
+
+    # 3. STATUS SEMAFORO (Visuale)
+    st.markdown("### 🚦 Indicatori Giornata")
+    m1, m2, m3, m4 = st.columns(4)
+    
+    # Logica Colori
+    pasti_ok = sum([n["breakfast"], n["lunch"], n["dinner"]])
+    color_nut = "normal" if pasti_ok == 3 else "off"
+    
+    sleep_val = day_data["sleep"]["hours"]
+    color_sleep = "normal" if sleep_val >= 7 else "off"
+    
+    m1.metric("Pasti", f"{pasti_ok}/3", delta="OK" if pasti_ok==3 else "-1", delta_color=color_nut)
+    m2.metric("Proteine", "SI" if n["protein_goal"] else "NO", delta="Build" if n["protein_goal"] else "Low", delta_color="normal" if n["protein_goal"] else "off")
+    m3.metric("Sonno", f"{sleep_val}h", delta="Recupero" if sleep_val>=7 else "Stress", delta_color=color_sleep)
+    m4.metric("Fame Mattutina", "SI" if day_data["health"]["morning_hunger"] else "NO", help="Segno di metabolismo attivo")
+
+# --- TAB 2: SINTOMI E CORPO ---
+with tab2:
+    col_h1, col_h2 = st.columns(2)
+    
+    with col_h1:
+        st.subheader("🤒 Sintomi (Check se presenti)")
+        h = day_data["health"]
+        h["fever"] = st.toggle("🌡️ Febbre (>37.5)", h["fever"])
+        h["sore_throat"] = st.toggle("🧣 Mal di Gola", h["sore_throat"])
+        h["cold"] = st.toggle("🤧 Raffreddore / Naso", h["cold"])
+        h["headache"] = st.toggle("🤯 Mal di testa", h["headache"])
+        h["fatigue"] = st.toggle("🔋 Stanchezza Marcata", h["fatigue"])
         
-        with st.container(border=True):
-            cols = st.columns(3)
-            for i, habit in enumerate(sched_habits):
-                h_name = habit["name"]
-                is_done = data["history"][today_str].get(h_name, False)
-                streak = get_streak(data["history"], h_name)
-                
-                label = f"{habit['icon']} {h_name}"
-                if streak > 2: label += f" 🔥{streak}"
-                
-                chk = cols[i % 3].checkbox(label, value=is_done, key=f"{h_name}_{today_str}")
-                
-                if chk != is_done:
-                    data["history"][today_str][h_name] = chk
-                    multiplier = 1.5 if "Deep" in h_name or "Allenamento" in h_name else 1.0
-                    xp_gain = int(10 * multiplier) if chk else -int(10 * multiplier)
-                    data["user_info"]["xp"] += xp_gain
-                    # SALVATAGGIO SPECIFICO UTENTE
-                    save_user_data(current_user, data)
-                    st.rerun()
+    with col_h2:
+        st.subheader("⚖️ Corpo & Sonno")
+        # Peso opzionale
+        w_val = h["weight"] if h["weight"] else 0.0
+        new_w = st.number_input("Peso (kg) - Opzionale", value=float(w_val), step=0.1)
+        h["weight"] = new_w if new_w > 0 else None
+        
+        h["bloating"] = st.checkbox("🐡 Gonfiore addominale", h["bloating"])
+        h["morning_hunger"] = st.checkbox("🍳 Fame appena sveglio", h["morning_hunger"])
+        
+        st.divider()
+        st.write("Sonno")
+        s = day_data["sleep"]
+        s["hours"] = st.number_input("Ore dormite", value=float(s["hours"]), step=0.5)
+        s["quality"] = st.slider("Qualità (1-5)", 1, 5, s["quality"])
 
-# -------------------------------
-# STATS ZONE
-# -------------------------------
-with col_stats:
-    done = sum(1 for k, v in data["history"][today_str].items() if v is True and k != "note")
-    total = len(active_habits)
-    val = (done / total * 100) if total > 0 else 0
+# --- TAB 3: ALLENAMENTO ---
+with tab3:
+    t = day_data["training"]
+    st.subheader("Log Attività")
     
-    st.plotly_chart(go.Figure(go.Indicator(
-        mode="gauge+number", value=val,
-        title={'text': "Daily Progress"},
-        gauge={'axis': {'range': [0, 100]}, 'bar': {'color': "#00cc96"}}
-    )), use_container_width=True)
+    t["type"] = st.selectbox("Tipo Allenamento", ["Riposo", "Calisthenics (Forza)", "Cardio LISS (Camminata)", "HIIT", "Mobility/Stretching"], index=["Riposo", "Calisthenics (Forza)", "Cardio LISS (Camminata)", "HIIT", "Mobility/Stretching"].index(t["type"]))
     
-    st.markdown("#### 📝 Diario Personale")
-    old_note = data["history"][today_str].get("note", "")
-    note = st.text_area("Note del giorno", value=old_note, height=150)
-    if note != old_note:
-        data["history"][today_str]["note"] = note
-        save_user_data(current_user, data)
+    col_t1, col_t2 = st.columns(2)
+    with col_t1:
+        t["duration"] = st.number_input("Durata (min)", value=int(t["duration"]), step=5)
+        t["intensity"] = st.slider("Intensità (RPE 1-10)", 1, 10, t["intensity"])
+    
+    with col_t2:
+        t["post_feeling"] = st.radio("Sensazione Post-Workout", ["Peggio (Drenato)", "Uguale", "Meglio (Energico)"], index=["Peggio (Drenato)", "Uguale", "Meglio (Energico)"].index(t["post_feeling"]))
+        t["soreness"] = st.checkbox("Dolori Muscolari (DOMS)", t["soreness"])
 
-st.divider()
-st.caption("Consistency Map (Ultimi 30 giorni)")
-dates = [str(date.today() - timedelta(days=i)) for i in range(29, -1, -1)]
-z_values = []
+# --- SALVATAGGIO ---
+st.markdown("---")
+# Nota diario
+day_data["notes"] = st.text_area("📝 Note del giorno / Pensieri", day_data["notes"])
 
-for d in dates:
-    day_d = data["history"].get(d, {})
-    cnt = sum(1 for k,v in day_d.items() if v is True and k != "note")
-    z_values.append(cnt)
+if st.button("💾 SALVA DIARIO GIORNALIERO", use_container_width=True, type="primary"):
+    user_history[selected_date_str] = day_data
+    full_db[current_user] = user_history
+    save_db(full_db)
+    st.success("Dati salvati nel database!")
+    st.balloons()
 
-fig_heat = go.Figure(data=go.Heatmap(
-    z=[z_values], x=dates, y=["Focus"],
-    colorscale="Greens", showscale=False
-))
-fig_heat.update_layout(height=120, margin=dict(t=0, b=20, l=0, r=0), xaxis_visible=False)
-st.plotly_chart(fig_heat, use_container_width=True)
+# --- TAB 4: ANALISI TRENDS ---
+with tab4:
+    st.subheader("📊 Analisi Metabolica")
+    
+    # Preparazione dati per i grafici
+    dates = sorted(user_history.keys())
+    if len(dates) < 2:
+        st.info("Inserisci dati per almeno 2 giorni per vedere i grafici.")
+    else:
+        # Creiamo un DataFrame pandas dai dati JSON
+        rows = []
+        for d in dates:
+            data = user_history[d]
+            rows.append({
+                "Date": d,
+                "Peso": data["health"].get("weight", None),
+                "Ore Sonno": data["sleep"].get("hours", 0),
+                "Calorie (Pasti)": sum([data["nutrition"]["breakfast"], data["nutrition"]["lunch"], data["nutrition"]["dinner"]]),
+                "Febbre": 1 if data["health"].get("fever") else 0,
+                "Intensità Allenamento": data["training"].get("intensity", 0) if data["training"]["type"] != "Riposo" else 0
+            })
+        
+        df = pd.DataFrame(rows)
+        
+        # 1. Grafico Peso e Sonno
+        fig = go.Figure()
+        # Linea Peso (mostra solo i punti dove c'è il dato)
+        df_weight = df.dropna(subset=["Peso"])
+        if not df_weight.empty:
+            fig.add_trace(go.Scatter(x=df_weight["Date"], y=df_weight["Peso"], mode='lines+markers', name='Peso Corporeo', line=dict(color='#1f77b4', width=3)))
+        
+        # Barre Sonno
+        fig.add_trace(go.Bar(x=df["Date"], y=df["Ore Sonno"], name='Ore Sonno', marker_color='#d62728', opacity=0.3, yaxis='y2'))
+        
+        fig.update_layout(
+            title="Trend Peso vs Qualità Recupero",
+            yaxis=dict(title="Peso (kg)"),
+            yaxis2=dict(title="Ore Sonno", overlaying='y', side='right', range=[0, 12]),
+            legend=dict(x=0, y=1.2, orientation='h')
+        )
+        st.plotly_chart(fig, use_container_width=True)
+
+        # 2. Heatmap Sintomi (Semplificata)
+        st.subheader("🔥 Mappa Sintomi & Allenamento")
+        
+        # Creiamo una griglia semplice per vedere quando ci si è allenati vs quando si stava male
+        fig_heat = px.density_heatmap(
+            df, x="Date", y="Intensità Allenamento", 
+            z="Febbre", 
+            title="Intensità Allenamento vs Giorni con Febbre (Colore = Febbre)",
+            color_continuous_scale="Reds"
+        )
+        st.plotly_chart(fig_heat, use_container_width=True)
+        
+        # Warning immunità
+        if df["Febbre"].sum() > 2:
+            st.error("⚠️ Pattern Rilevato: Episodi febbrili frequenti. Valuta scarico allenamento.")
